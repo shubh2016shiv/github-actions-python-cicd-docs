@@ -147,20 +147,9 @@ az webapp create \
     --deployment-container-image-name yourprodacr.azurecr.io/your-app:latest
 ```
 
-#### 1.5 Configure ACR Admin Access
-```bash
-# Enable admin user for each ACR (required for GitHub Actions login)
-az acr update --name yourdevacr --admin-enabled true
-az acr update --name yourqaacr --admin-enabled true
-az acr update --name yourprodacr --admin-enabled true
+#### 1.5 Set Up OIDC Authentication (Recommended)
 
-# Get ACR credentials
-az acr credential show --name yourdevacr --query "passwords[0].value" -o tsv
-```
-
-#### 1.6 Set Up OIDC Authentication (Recommended over Service Principal)
-
-OIDC federation eliminates the need to store long-lived credentials in GitHub Secrets:
+OIDC federation eliminates the need to store long-lived credentials in GitHub Secrets or enable ACR admin access:
 
 ```bash
 # Create an Entra ID App Registration
@@ -178,6 +167,12 @@ az role assignment create \
     --role Contributor \
     --scope /subscriptions/{subscription-id}/resourceGroups/your-project-rg
 
+# Assign ACR Push role (for pushing images from GitHub Actions)
+az role assignment create \
+    --assignee $APP_ID \
+    --role "AcrPush" \
+    --scope /subscriptions/{subscription-id}/resourceGroups/your-project-rg
+
 # Add federated credential for GitHub
 az ad app federated-credential create \
     --id $APP_ID \
@@ -189,6 +184,8 @@ az ad app federated-credential create \
         "audiences": ["api://AzureADTokenExchange"]
     }'
 ```
+
+> **Important**: Do NOT enable ACR admin access unless you have a specific legacy requirement. The OIDC service principal with `AcrPush` and `AcrPull` roles provides secure, scoped access without long-lived passwords. If admin access was previously enabled, disable it with `az acr update --name yourdevacr --admin-enabled false`.
 
 **Why OIDC?**
 - No secrets to rotate or leak
@@ -241,32 +238,23 @@ Navigate to **Settings → Branches → Add rule** and configure:
 Navigate to **Settings → Secrets and variables → Actions** and configure:
 
 ```yaml
-# Azure OIDC (if using OIDC authentication)
+# Azure OIDC (recommended - no long-lived credentials)
 AZURE_CLIENT_ID: "your-app-registration-app-id"
 AZURE_TENANT_ID: "your-tenant-id"
 AZURE_SUBSCRIPTION_ID: "your-subscription-id"
 
-# OR Azure Credentials (if using service principal - legacy)
-AZURE_CREDENTIALS: '{"clientId":"...","clientSecret":"...","subscriptionId":"...","tenantId":"..."}'
-
-# Development ACR
+# ACR names (used as variables or secrets for dynamic lookup)
 DEV_ACR_NAME: "yourdevacr"
-DEV_ACR_USERNAME: "yourdevacr"
-DEV_ACR_PASSWORD: "<acr-admin-password>"
-
-# QA ACR
 QA_ACR_NAME: "yourqaacr"
-QA_ACR_USERNAME: "yourqaacr"
-QA_ACR_PASSWORD: "<acr-admin-password>"
-
-# Production ACR
 PROD_ACR_NAME: "yourprodacr"
-PROD_ACR_USERNAME: "yourprodacr"
-PROD_ACR_PASSWORD: "<acr-admin-password>"
 
 # SonarCloud
 SONAR_TOKEN: "your-sonar-token"
 ```
+
+> **Note**: With OIDC authentication, you do NOT need ACR usernames or passwords. The `azure/login@v2` action handles authentication, and the service principal's `AcrPush`/`AcrPull` roles provide registry access. If you must use ACR credentials (e.g., for `docker/login-action` without Azure CLI), store them as environment-scoped secrets and rotate them quarterly.
+
+> **Note**: With OIDC authentication, you do NOT need ACR usernames or passwords. The `azure/login@v2` action handles authentication, and the service principal's `AcrPush`/`AcrPull` roles provide registry access. If you must use ACR credentials (e.g., for `docker/login-action` without Azure CLI), store them as environment-scoped secrets and rotate them quarterly.
 
 #### 2.4 GitHub Variables (Non-Sensitive Configuration)
 
@@ -285,7 +273,21 @@ SONAR_PROJECT_KEY: "your-org_your-project"
 
 ### Step 1: Create Central Reusable Workflows
 
-Create a dedicated repository (e.g., `your-org/cicd-templates`) to store reusable workflows. This enables sharing across multiple projects.
+You have two options for storing reusable workflows:
+
+**Option A: Same repository (simpler, recommended for single-project teams)**
+Store workflows in the same repo at `.github/workflows/`. Reference them with local paths:
+```yaml
+uses: ./.github/workflows/reusable-base-workflow.yml
+```
+
+**Option B: Dedicated template repository (recommended for multi-project organizations)**
+Create a dedicated repository (e.g., `your-org/cicd-templates`) to store reusable workflows. This enables sharing across multiple projects. Reference them with remote paths:
+```yaml
+uses: your-org/cicd-templates/.github/workflows/reusable-base-workflow.yml@main
+```
+
+The examples below use **Option A** (same repo) for simplicity. To use Option B, replace `./.github/workflows/` with `your-org/cicd-templates/.github/workflows/` in all `uses:` lines.
 
 #### 1.1 Base Workflow Template
 

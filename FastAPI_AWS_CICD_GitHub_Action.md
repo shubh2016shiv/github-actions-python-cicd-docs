@@ -1072,14 +1072,20 @@ addopts = -v --tb=short
 **Symptom:** OIDC authentication fails after AWS thumbprint update
 
 **Resolution:**
+GitHub's OIDC provider thumbprint can change periodically. AWS now supports using `token.actions.githubusercontent.com` as the thumbprint directly without manual extraction:
 ```bash
-# Get current thumbprint
-echo | openssl s_client -servername token.actions.githubusercontent.com \
-    -showcerts -connect token.actions.githubusercontent.com:443 2>/dev/null | \
-    openssl x509 -fingerprint -noout
+# If your OIDC provider was created with a manual thumbprint, you may need to update it.
+# The simplest approach is to delete and recreate the provider:
+aws iam delete-open-id-connect-provider --open-id-connect-provider-arn <provider-arn>
 
-# Update in AWS IAM Console > Identity providers > token.actions.githubusercontent.com
+# Then recreate it using the setup.sh script, or use the AWS console:
+# IAM → Identity providers → Create provider → URL: https://token.actions.githubusercontent.com
+# AWS will auto-discover the current thumbprint.
 ```
+
+> **Note**: As of 2024, AWS supports automatic thumbprint discovery for well-known OIDC providers. If your `setup.sh` script fails on thumbprint extraction, you can skip the thumbprint step and let AWS discover it automatically by creating the provider through the console or using `aws iam create-open-id-connect-provider` without the `--thumbprint-list` flag (AWS will fetch it).
+
+> **Note**: As of 2024, AWS supports automatic thumbprint discovery for well-known OIDC providers. If your `setup.sh` script fails on thumbprint extraction, you can skip the thumbprint step and let AWS discover it automatically by creating the provider through the console or using `aws iam create-open-id-connect-provider` without the `--thumbprint-list` flag (AWS will fetch it).
 
 ### ECS Tasks Fail to Start
 

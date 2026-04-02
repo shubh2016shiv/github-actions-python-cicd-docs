@@ -119,59 +119,91 @@ az webapp log config -g fastapi-rg -n your-fastapi-app \
     --docker-container-logging filesystem
 ```
 
-## 2. Hardened Dockerfile
+## 2. Hardened Multi-Stage Dockerfile
 
 ```dockerfile
-FROM python:3.11-slim
+# ============================================================
+# Stage 1: Build dependencies
+# ============================================================
+FROM python:3.11-slim AS builder
 
-# Security & performance optimizations
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    PIP_NO_CACHE_DIR=1 \
+    PIP_NO_CACHE_DIR=1
+
+WORKDIR /build
+
+COPY requirements.txt .
+RUN pip install --prefix=/install -r requirements.txt
+
+# ============================================================
+# Stage 2: Production runtime
+# ============================================================
+FROM python:3.11-slim AS production
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
     PORT=80 \
     WORKERS=4 \
-    LOG_LEVEL=info
+    LOG_LEVEL=info \
+    PYTHONPATH=/app
 
 WORKDIR /app
 
-# Install system dependencies (if needed)
-# RUN apt-get update && apt-get install -y --no-install-recommends \
-#     build-essential \
-#     && rm -rf /var/lib/apt/lists/*
+# Copy installed dependencies from builder
+COPY --from=builder /install /usr/local
 
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# Install curl for health checks
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
 
-COPY ./app .
+# Create non-root user first
+RUN useradd --create-home --shell /bin/bash appuser
 
-# Create non-root user
-RUN useradd -m appuser && chown -R appuser:appuser /app
+# Copy application code
+COPY --chown=appuser:appuser ./app ./app
+
+# Switch to non-root user
 USER appuser
 
 EXPOSE ${PORT}
 
-HEALTHCHECK --interval=30s --timeout=30s --start-period=5s --retries=3 \
+# Docker-level health check
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD curl -f http://localhost:${PORT}/health || exit 1
 
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "80", "--workers", "4"]
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "80", "--workers", "4"]
 ```
+
+**Why multi-stage builds?**
+- **Smaller images**: Build tools and intermediate files are discarded
+- **Security**: Production image contains only runtime dependencies
+- **Faster pulls**: Smaller images deploy faster to Azure App Service
 
 ## 3. FastAPI Application with Health Check
 
 File: `app/main.py`
 ```python
+import os
 from fastapi import FastAPI, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 app = FastAPI(title="Production FastAPI App")
 
+# Restrict CORS to known origins in production
+allowed_origins = os.getenv(
+    "ALLOWED_ORIGINS",
+    "https://yourdomain.com,https://your-app.azurewebsites.net"
+).split(",")
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=allowed_origins,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE"],
+    allow_headers=["Authorization", "Content-Type"],
 )
 
 @app.get("/health", status_code=status.HTTP_200_OK)

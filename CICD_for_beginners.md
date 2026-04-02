@@ -137,7 +137,79 @@ jobs:
 6. **Lint**: Runs flake8 to catch syntax errors and style issues
 7. **Test**: Runs pytest with coverage reporting
 
-> **GenAI Tip**: If your tests call external LLM APIs, mock them using `pytest-mock` or `responses` to avoid API costs and ensure deterministic tests.
+> **GenAI Tip**: If your tests call external LLM APIs, mock them using `pytest-mock` or `responses` to avoid API costs and ensure deterministic tests. See the example below.
+
+### Example: Mocking an LLM API Call in Tests
+
+Create a test file `tests/test_app.py` so the CI pipeline has something to run:
+
+```python
+from unittest.mock import patch
+import pytest
+
+def generate_response(prompt: str) -> str:
+    """Simulates calling an external LLM API."""
+    # In production this would be an HTTP call to OpenAI, Anthropic, etc.
+    import requests
+    response = requests.post("https://api.example.com/v1/chat", json={"prompt": prompt})
+    return response.json()["text"]
+
+
+@patch("requests.post")
+def test_generate_response(mock_post):
+    mock_post.return_value.json.return_value = {"text": "Hello, world!"}
+    mock_post.return_value.status_code = 200
+
+    result = generate_response("Say hello")
+
+    assert result == "Hello, world!"
+    mock_post.assert_called_once_with(
+        "https://api.example.com/v1/chat",
+        json={"prompt": "Say hello"},
+    )
+```
+
+**Why mock?**
+- **Cost control**: LLM API calls cost money per token. Mocking keeps CI free.
+- **Determinism**: External APIs can return different outputs for the same input. Mocks guarantee repeatable tests.
+- **Speed**: Network calls add seconds or minutes. Mocks execute in milliseconds.
+- **Offline CI**: Runners may not have access to your API keys or may be rate-limited. See the example below.
+
+### Example: Mocking an LLM API Call in Tests
+
+Create a test file `tests/test_app.py` so the CI pipeline has something to run:
+
+```python
+from unittest.mock import patch
+import pytest
+
+def generate_response(prompt: str) -> str:
+    """Simulates calling an external LLM API."""
+    # In production this would be an HTTP call to OpenAI, Anthropic, etc.
+    import requests
+    response = requests.post("https://api.example.com/v1/chat", json={"prompt": prompt})
+    return response.json()["text"]
+
+
+@patch("requests.post")
+def test_generate_response(mock_post):
+    mock_post.return_value.json.return_value = {"text": "Hello, world!"}
+    mock_post.return_value.status_code = 200
+
+    result = generate_response("Say hello")
+
+    assert result == "Hello, world!"
+    mock_post.assert_called_once_with(
+        "https://api.example.com/v1/chat",
+        json={"prompt": "Say hello"},
+    )
+```
+
+**Why mock?**
+- **Cost control**: LLM API calls cost money per token. Mocking keeps CI free.
+- **Determinism**: External APIs can return different outputs for the same input. Mocks guarantee repeatable tests.
+- **Speed**: Network calls add seconds or minutes. Mocks execute in milliseconds.
+- **Offline CI**: Runners may not have access to your API keys or may be rate-limited.
 
 ---
 
